@@ -122,8 +122,9 @@ private[deploy] class Master(
   private var checkForWorkerTimeOutTask: ScheduledFuture[_] = _
 
   // As a temporary workaround before better ways of configuring memory, we allow users to set
-  // a flag that will perform round-robin scheduling across the nodes (spreading out each app
+  // a flag that will perform round-robin(循环) scheduling across the nodes (spreading out each app
   // among all the nodes) instead of trying to consolidate each app onto a small # of nodes.
+  /*spreadOut扩散*/
   private val spreadOutApps = conf.getBoolean("spark.deploy.spreadOut", true)
 
   // Default maxCores for applications that don't specify it (i.e. pass Int.MaxValue)
@@ -240,7 +241,7 @@ private[deploy] class Master(
       logError("Leadership has been revoked -- master shutting down.")
       System.exit(0)
     }
-
+    /*Application提交注册到Master*/
     case RegisterApplication(description, driver) => {
       // TODO Prevent repeated registrations from some driver
       if (state == RecoveryState.STANDBY) {
@@ -252,6 +253,8 @@ private[deploy] class Master(
         logInfo("Registered app " + description.name + " with ID " + app.id)
         persistenceEngine.addApplication(app)
         driver.send(RegisteredApplication(app.id, self))
+        /*调用schedule（）这个方法，来分配Driver的资源，和启动Executor的资源*/
+        /*调度当前可用资源的调度方法，它管理还在排队等待的Apps资源的分配，这个方法是每次在集群资源发生变动的时候都会调用，根据当前集群最新的资源来进行Apps的资源分配*/
         schedule()
       }
     }
@@ -655,18 +658,20 @@ private[deploy] class Master(
    * Schedule and launch executors on workers
    */
   private def startExecutorsOnWorkers(): Unit = {
-    // Right now this is a very simple FIFO scheduler. We keep trying to fit in the first app
+    // Right now this is a very simple FIFO scheduler.  这是一个简单的FIFO调度
+    // We keep trying to fit in the first app
     // in the queue, then the second app, etc.
+    /*对还未被完全分配资源的apps处理*/
     for (app <- waitingApps if app.coresLeft > 0) {
       val coresPerExecutor: Option[Int] = app.desc.coresPerExecutor
-      // Filter out workers that don't have enough resources to launch an executor
+      // Filter out（过滤掉） workers that don't have enough resources to launch an executor
       val usableWorkers = workers.toArray.filter(_.state == WorkerState.ALIVE)
         .filter(worker => worker.memoryFree >= app.desc.memoryPerExecutorMB &&
           worker.coresFree >= coresPerExecutor.getOrElse(1))
         .sortBy(_.coresFree).reverse
       val assignedCores = scheduleExecutorsOnWorkers(app, usableWorkers, spreadOutApps)
 
-      // Now that we've decided how many cores to allocate on each worker, let's allocate them
+      // Now that we've decided how many cores to allocate（分配） on each worker, let's allocate them
       for (pos <- 0 until usableWorkers.length if assignedCores(pos) > 0) {
         allocateWorkerResourceToExecutors(
           app, assignedCores(pos), coresPerExecutor, usableWorkers(pos))
@@ -693,23 +698,31 @@ private[deploy] class Master(
     val coresToAssign = coresPerExecutor.getOrElse(assignedCores)
     for (i <- 1 to numExecutors) {
       val exec = app.addExecutor(worker, coresToAssign)
+      /*通知可用Worker去启动Executor*/
       launchExecutor(worker, exec)
       app.state = ApplicationState.RUNNING
     }
   }
 
   /**
-   * Schedule the currently available resources among waiting apps. This method will be called
-   * every time a new app joins or resource availability changes.
+   * Schedule the currently available resources among waiting apps.
+    * 调度当前有效的资源在等待的app中
+    * This method will be called every time a new app joins or resource availability changes.
+    * 这个方法在一个新的应用加入集群或者资源发生变动时都被调用
    */
   private def schedule(): Unit = {
     if (state != RecoveryState.ALIVE) { return }
-    // Drivers take strict precedence over executors
-    val shuffledWorkers = Random.shuffle(workers) // Randomization helps balance drivers
+    // Drivers take strict precedence over executors  Drivers严格的优先于executors
+    val shuffledWorkers = Random.shuffle(workers) // Randomization helps balance drivers  随机化有助于平衡驱动程序
+    /*遍历活着的workers*/
     for (worker <- shuffledWorkers if worker.state == WorkerState.ALIVE) {
+      /*在等待队列中的Driver们会进行资源分配*/
       for (driver <- waitingDrivers) {
+        /*当前的worker内存和cpu均大于当前driver请求的mem和cpu，则启动*/
         if (worker.memoryFree >= driver.desc.mem && worker.coresFree >= driver.desc.cores) {
+          /*启动Driver 内部实现是发送启动Driver命令给指定Worker，Worker来启动Driver*/
           launchDriver(worker, driver)
+          /*把启动过的Driver从队列移除*/
           waitingDrivers -= driver
         }
       }

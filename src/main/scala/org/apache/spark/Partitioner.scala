@@ -32,9 +32,12 @@ import org.apache.spark.util.random.{XORShiftRandom, SamplingUtils}
 /**
  * An object that defines how the elements in a key-value pair RDD are partitioned by key.
  * Maps each key to a partition ID, from 0 to `numPartitions - 1`.
+  * 通过这个方法我们可以自定义分区
  */
 abstract class Partitioner extends Serializable {
+  /*这个方法需要返回你想要创建分区的个数*/
   def numPartitions: Int
+  /*这个函数需要对输入的key做计算，然后返回该key的分区ID，范围一定是0到numPartitions-1*/
   def getPartition(key: Any): Int
 }
 
